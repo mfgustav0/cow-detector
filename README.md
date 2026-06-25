@@ -103,3 +103,15 @@ Para obter melhores resultados:
 ## Aviso
 
 Este sistema possui finalidade acadêmica e experimental. Os resultados devem ser utilizados apenas como apoio à análise visual e não substituem avaliações realizadas por médicos veterinários ou profissionais da área zootécnica.
+
+## Base de Testes
+
+Os arquivos de imagem e vídeo utilizados durante o desenvolvimento e avaliação do sistema foram obtidos da plataforma Pixabay.
+
+Referência:
+
+Pixabay. Banco de imagens e vídeos gratuitos. Disponível em:
+https://pixabay.com/pt/videos/search/
+Acesso em: 21/06/2026.
+
+Os materiais foram utilizados exclusivamente para fins acadêmicos e de validação do sistema de detecção e estimativa de métricas bovinas.
