@@ -53,7 +53,6 @@ def draw_overlay(frame: np.ndarray, det: dict, metrics: dict, diag: dict) -> np.
     h_img, w_img = img.shape[:2]
     hud_lines = [
         "BOVIMC VISION  v1.0",
-        f"BCS: {metrics['bcs']}/5",
         f"PESO EST: {metrics['peso_kg']} kg",
         f"ALTURA EST: {metrics['altura_cm']} cm",
         f"IMC: {metrics['imc']:.2f}",
@@ -218,7 +217,7 @@ class BovIMCApp(tk.Tk):
         t.insert("end", "  Nenhuma análise realizada ainda.\n\n", "dim")
         t.insert("end", "  Abra uma imagem ou vídeo para\n  detectar automaticamente:\n\n", "dim")
         for item in ["Presença de bovino", "Tamanho estimado (altura/comprimento)",
-                     "Peso corporal estimado", "IMC Bovino", "Condição Corporal (BCS)",
+                     "Peso corporal estimado", "IMC Bovino",
                      "Score de saúde", "Alertas automáticos"]:
             t.insert("end", f"  • {item}\n", "dim")
         t.configure(state="disabled")
@@ -426,8 +425,7 @@ class BovIMCApp(tk.Tk):
             if (
                 m1["peso_kg"] != m2["peso_kg"] or
                 m1["altura_cm"] != m2["altura_cm"] or
-                m1["imc"] != m2["imc"] or
-                m1["bcs"] != m2["bcs"]
+                m1["imc"] != m2["imc"]
             ):
                 return False
 
@@ -557,7 +555,6 @@ class BovIMCApp(tk.Tk):
                 ("Comprimento",       f"{metrics['comprimento_cm']} cm",""),
                 ("Robustez (w/h)",    f"{metrics['wh_ratio']:.2f}",     "  (gordo>1.05, magro<0.80)"),
                 ("IMC Bovino",        f"{imc:.2f}",                     "  (normal: 2.00–2.80)"),
-                ("BCS",               f"{metrics['bcs']}/5",            "  (ideal: 3/5)"),
             ]
             for label, val, note in rows:
                 t.insert("end", f"  {label:<20}", "dim")

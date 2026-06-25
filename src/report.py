@@ -284,7 +284,6 @@ def gerar_relatorio(
                 ["Comprimento",           f"{metrics['comprimento_cm']} cm","160–220 cm"],
                 ["IMC Bovino",            f"{imc:.2f}",               "2.00–2.80 (ideal)"],
                 ["Interpretação IMC",     interp,                     "—"],
-                ["Cond. Corporal (BCS)",  f"{metrics['bcs']}/5",      "3/5 (ideal)"],
                 ["Robustez visual (w/h)", f"{metrics['wh_ratio']:.2f}","<0.80 magro | >1.05 gordo"],
                 ["Status geral",          status,                     "—"],
             ]

@@ -96,28 +96,17 @@ class Detector:
         altura_m = altura_cm / 100.0
         imc = round((peso_kg / (altura_m ** 2)) * 0.01, 2)
 
-        # ── BCS direto pelo wh_ratio ──────────────────────────────────────────
-        # Mais confiável que IMC para detectar gordura visual:
-        # evita falso-magro em raças com pelagem volumosa (ex: Highland).
-        if   wh_ratio < 0.65: bcs = 1
-        elif wh_ratio < 0.80: bcs = 2
-        elif wh_ratio < 1.05: bcs = 3
-        elif wh_ratio < 1.25: bcs = 4
-        else:                  bcs = 5
-
         return {
             "altura_cm":      altura_cm,
             "comprimento_cm": comprimento_cm,
             "peso_kg":        peso_kg,
             "imc":            imc,
-            "bcs":            bcs,
             "wh_ratio":       round(wh_ratio, 2),
         }
 
     @staticmethod
     def diagnostico(metrics: dict) -> dict:
         imc  = metrics["imc"]
-        bcs  = metrics["bcs"]
         alertas = []
         score   = 100
 
@@ -133,16 +122,6 @@ class Detector:
         elif imc > 2.80:
             alertas.append(("AVISO",    f"IMC {imc:.2f} — Levemente acima do ideal"))
             score -= 8
-
-        if bcs == 1:
-            alertas.append(("CRÍTICO", "BCS 1/5 — Animal caquético, intervenção urgente"))
-            score -= 30
-        elif bcs == 2:
-            alertas.append(("ATENÇÃO",  "BCS 2/5 — Animal magro, revisar dieta"))
-            score -= 15
-        elif bcs == 5:
-            alertas.append(("ATENÇÃO",  "BCS 5/5 — Obesidade bovina"))
-            score -= 15
 
         if metrics["peso_kg"] < 150:
             alertas.append(("CRÍTICO", f"Peso {metrics['peso_kg']} kg — muito baixo"))
