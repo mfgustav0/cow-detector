@@ -9,7 +9,6 @@ import threading
 import os
 import time
 import datetime
-import io
 
 import cv2
 import numpy as np
@@ -17,62 +16,47 @@ from PIL import Image, ImageTk
 import matplotlib
 matplotlib.use("Agg")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# DESENHO NO FRAME
-# ══════════════════════════════════════════════════════════════════════════════
-
 def draw_overlay(frame: np.ndarray, det: dict, metrics: dict, diag: dict) -> np.ndarray:
-    img    = frame.copy()
+    img = frame.copy()
     x1, y1, x2, y2 = det["x1"], det["y1"], det["x2"], det["y2"]
     status = diag["status"]
-    col    = src.utils.colors.GREEN_RGB if status == "SAUDÁVEL" else (src.utils.colors.AMBER_RGB if status == "ATENÇÃO" else src.utils.colors.RED_RGB)
-    col_bgr = col[::-1]
+    col = (src.utils.colors.GREEN_RGB if status == "SAUDÁVEL"
+           else src.utils.colors.AMBER_RGB if status == "ATENÇÃO"
+           else src.utils.colors.RED_RGB)
+    bgr = col[::-1]
 
-    cv2.rectangle(img, (x1, y1), (x2, y2), col_bgr, 2)
-
+    cv2.rectangle(img, (x1, y1), (x2, y2), bgr, 2)
     sz = 18
-    for (cx, cy, dx, dy) in [(x1,y1,1,1),(x2,y1,-1,1),(x1,y2,1,-1),(x2,y2,-1,-1)]:
-        cv2.line(img, (cx, cy), (cx + dx*sz, cy), col_bgr, 3)
-        cv2.line(img, (cx, cy), (cx, cy + dy*sz), col_bgr, 3)
+    for cx, cy, dx, dy in [(x1,y1,1,1),(x2,y1,-1,1),(x1,y2,1,-1),(x2,y2,-1,-1)]:
+        cv2.line(img, (cx, cy), (cx + dx*sz, cy), bgr, 3)
+        cv2.line(img, (cx, cy), (cx, cy + dy*sz), bgr, 3)
 
-    label_txt = (
-        f"{det['label'].upper()}  {det['confidence']*100:.0f}%  |  "
-        f"{metrics['peso_kg']} kg  |  {metrics['altura_cm']} cm  |  "
-        f"IMC {metrics['imc']:.2f}"
-    )
     font  = cv2.FONT_HERSHEY_SIMPLEX
-    scale = 0.50
-    thick = 1
-    (tw, th), _ = cv2.getTextSize(label_txt, font, scale, thick)
+    label = (f"{det['label'].upper()}  {det['confidence']*100:.0f}%  |  "
+             f"{metrics['peso_kg']} kg  |  {metrics['altura_cm']} cm  |  "
+             f"IMC {metrics['imc']:.2f}")
+    (tw, th), _ = cv2.getTextSize(label, font, 0.50, 1)
     pad = 5
-    lbl_y1 = max(0, y1 - th - 2*pad - 2)
-    cv2.rectangle(img, (x1, lbl_y1), (x1 + tw + 2*pad, y1), col_bgr, -1)
-    cv2.putText(img, label_txt, (x1 + pad, y1 - pad),
-                font, scale, (0, 0, 0), thick, cv2.LINE_AA)
+    ly1 = max(0, y1 - th - 2*pad - 2)
+    cv2.rectangle(img, (x1, ly1), (x1 + tw + 2*pad, y1), bgr, -1)
+    cv2.putText(img, label, (x1 + pad, y1 - pad), font, 0.50, (0,0,0), 1, cv2.LINE_AA)
 
     h_img, w_img = img.shape[:2]
-    hud_lines = [
+    for i, line in enumerate(reversed([
         "BOVIMC VISION  v1.0",
         f"PESO EST: {metrics['peso_kg']} kg",
         f"ALTURA EST: {metrics['altura_cm']} cm",
         f"IMC: {metrics['imc']:.2f}",
-    ]
-    for i, line in enumerate(reversed(hud_lines)):
-        cv2.putText(img, line, (w_img - 210, h_img - 8 - i * 16),
-                    font, 0.38, col_bgr, 1, cv2.LINE_AA)
-
+    ])):
+        cv2.putText(img, line, (w_img - 210, h_img - 8 - i*16),
+                    font, 0.38, bgr, 1, cv2.LINE_AA)
     return img
 
 
 def frame_to_photoimage(frame_bgr: np.ndarray, max_w: int, max_h: int) -> ImageTk.PhotoImage:
-    rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    pil = Image.fromarray(rgb)
+    pil = Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
     pil.thumbnail((max_w, max_h), Image.LANCZOS)
     return ImageTk.PhotoImage(pil)
-
-# ══════════════════════════════════════════════════════════════════════════════
-# INTERFACE GRÁFICA
-# ══════════════════════════════════════════════════════════════════════════════
 
 class BovIMCApp(tk.Tk):
 
@@ -86,22 +70,21 @@ class BovIMCApp(tk.Tk):
         self.resizable(True, True)
         self.minsize(1100, 700)
 
-        self._detector    = None
-        self._cap         = None
-        self._video_job   = None
-        self._current_results = []
-
-        # Sessão de análise: acumula dados para o relatório
-        self._session: list = []          # lista de {frame_bgr, results, ts, source}
-        self._last_annotated: np.ndarray | None = None  # último frame anotado (sem piscar)
-        self._last_results: list = []     # últimos resultados (para re-renderizar frames sem análise)
-        self._source_name: str = ""
-        self._video_start_time: float = 0
+        self._detector         = None
+        self._cap              = None
+        self._video_job        = None
+        self._session: list    = []
+        self._last_annotated   = None
+        self._source_name      = ""
+        self._video_start_time = 0.0
+        self._frame_count      = 0
 
         self._build_ui()
         self._load_model_async()
 
-    # ── Build UI ──────────────────────────────────────────────────────────────
+    def _canvas_size(self) -> tuple[int, int]:
+        return (self._canvas.winfo_width()  or self.PREVIEW_W,
+                self._canvas.winfo_height() or self.PREVIEW_H)
 
     def _build_ui(self):
         self.columnconfigure(0, weight=3)
@@ -117,8 +100,7 @@ class BovIMCApp(tk.Tk):
         hdr.grid(row=0, column=0, columnspan=2, sticky="ew")
         hdr.columnconfigure(1, weight=1)
 
-        tk.Label(hdr, text="🐄",
-                 bg=C["panel"], fg=C["green"],
+        tk.Label(hdr, text="🐄", bg=C["panel"], fg=C["green"],
                  font=("Courier New", 18, "bold")).grid(row=0, column=0, padx=20, sticky="w")
         tk.Label(hdr, text="Detecção Automática de Tamanho • Peso • IMC Bovino",
                  bg=C["panel"], fg=C["text_mid"],
@@ -127,17 +109,14 @@ class BovIMCApp(tk.Tk):
         btn_frame = tk.Frame(hdr, bg=C["panel"])
         btn_frame.grid(row=0, column=2, rowspan=2, padx=20, sticky="e")
 
-        self._btn_img = self._make_btn(btn_frame, "📷  Abrir Imagem",
-                                       self._open_image, C["green_dim"], C["green"])
-        self._btn_img.pack(side="left", padx=6)
-
-        self._btn_vid = self._make_btn(btn_frame, "🎬  Abrir Vídeo",
-                                       self._open_video, C["green_dim"], C["green"])
-        self._btn_vid.pack(side="left", padx=6)
-
+        self._btn_img  = self._make_btn(btn_frame, "📷  Abrir Imagem",
+                                        self._open_image, C["green_dim"], C["green"])
+        self._btn_vid  = self._make_btn(btn_frame, "🎬  Abrir Vídeo",
+                                        self._open_video, C["green_dim"], C["green"])
         self._btn_stop = self._make_btn(btn_frame, "⏹  Parar e Gerar Relatório",
                                         self._stop_and_report, C["red_dim"], C["red"])
-        self._btn_stop.pack(side="left", padx=6)
+        for btn in (self._btn_img, self._btn_vid, self._btn_stop):
+            btn.pack(side="left", padx=6)
         self._btn_stop.configure(state="disabled")
 
     def _make_btn(self, parent, text, cmd, bg, fg):
@@ -153,24 +132,29 @@ class BovIMCApp(tk.Tk):
         frame.columnconfigure(0, weight=1)
 
         self._canvas = tk.Canvas(frame, bg=C["panel"],
-                                  highlightthickness=1, highlightbackground=C["border"],
-                                  width=self.PREVIEW_W, height=self.PREVIEW_H)
+                                 highlightthickness=1, highlightbackground=C["border"],
+                                 width=self.PREVIEW_W, height=self.PREVIEW_H)
         self._canvas.grid(row=0, column=0, sticky="nsew")
-        self._show_placeholder()
+        self._is_placeholder = True
+        self._canvas.bind("<Configure>", self._on_canvas_resize)
+
+    def _on_canvas_resize(self, event=None):
+        if self._is_placeholder:
+            self._show_placeholder()
 
     def _show_placeholder(self):
+        self._is_placeholder = True
         self._canvas.delete("all")
-        cw = self._canvas.winfo_width() or self.PREVIEW_W
-        ch = self._canvas.winfo_height() or self.PREVIEW_H
-        cx, cy = (cw // 2 + 250), ch // 2
+        cw, ch = self._canvas_size()
+        cx, cy = cw // 2, ch // 2
         self._canvas.create_text(cx, cy - 30, text="📁",
-                                  font=("Arial", 48), fill=C["text_dim"])
-        self._canvas.create_text(cx, cy + 30,
-                                  text="Selecione uma imagem ou vídeo para iniciar a análise",
-                                  font=("Courier New", 11), fill=C["text_dim"])
-        self._canvas.create_text(cx, cy + 55,
-                                  text="Formatos aceitos: JPG · PNG · BMP · MP4 · AVI · MOV · MKV",
-                                  font=("Courier New", 9), fill=C["text_dim"])
+                                 font=("Arial", 48), fill=C["text_dim"])
+        self._canvas.create_text(cx, cy + 20,
+                                 text="Selecione uma imagem ou vídeo para iniciar a análise",
+                                 font=("Courier New", 11), fill=C["text_dim"])
+        self._canvas.create_text(cx, cy + 48,
+                                 text="Formatos aceitos: JPG · PNG · BMP · MP4 · AVI · MOV · MKV",
+                                 font=("Courier New", 9), fill=C["text_dim"])
 
     def _build_results_panel(self):
         outer = tk.Frame(self, bg=C["bg"])
@@ -178,35 +162,35 @@ class BovIMCApp(tk.Tk):
         outer.rowconfigure(1, weight=1)
         outer.columnconfigure(0, weight=1)
 
-        tk.Label(outer, text="LAUDO AUTOMÁTICO",
-                 bg=C["bg"], fg=C["text_dim"],
+        tk.Label(outer, text="LAUDO AUTOMÁTICO", bg=C["bg"], fg=C["text_dim"],
                  font=("Courier New", 9, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 6))
 
-        scroll_frame = tk.Frame(outer, bg=C["bg"])
-        scroll_frame.grid(row=1, column=0, sticky="nsew")
-        scroll_frame.rowconfigure(0, weight=1)
-        scroll_frame.columnconfigure(0, weight=1)
+        sf = tk.Frame(outer, bg=C["bg"])
+        sf.grid(row=1, column=0, sticky="nsew")
+        sf.rowconfigure(0, weight=1)
+        sf.columnconfigure(0, weight=1)
 
         self._results_text = tk.Text(
-            scroll_frame,
-            bg=C["card"], fg=C["text"],
-            font=("Courier New", 10),
-            relief="flat", bd=0, wrap="word",
-            state="disabled", padx=10, pady=8, spacing3=4,
+            sf, bg=C["card"], fg=C["text"], font=("Courier New", 10),
+            relief="flat", bd=0, wrap="word", state="disabled",
+            padx=10, pady=8, spacing3=4,
         )
-        sb = ttk.Scrollbar(scroll_frame, command=self._results_text.yview)
+        sb = ttk.Scrollbar(sf, command=self._results_text.yview)
         self._results_text.configure(yscrollcommand=sb.set)
         self._results_text.grid(row=0, column=0, sticky="nsew")
         sb.grid(row=0, column=1, sticky="ns")
 
-        self._results_text.tag_configure("title",    foreground=C["green"],   font=("Courier New", 11, "bold"))
-        self._results_text.tag_configure("section",  foreground=C["text_mid"],font=("Courier New", 9, "bold"))
-        self._results_text.tag_configure("value",    foreground=C["white"],   font=("Courier New", 10, "bold"))
-        self._results_text.tag_configure("ok",       foreground=C["green"],   font=("Courier New", 10, "bold"))
-        self._results_text.tag_configure("warn",     foreground=C["amber"],   font=("Courier New", 10, "bold"))
-        self._results_text.tag_configure("critical", foreground=C["red"],     font=("Courier New", 10, "bold"))
-        self._results_text.tag_configure("dim",      foreground=C["text_dim"])
-        self._results_text.tag_configure("normal",   foreground=C["text"])
+        for tag, fg, font in [
+            ("title",    C["green"],    ("Courier New", 11, "bold")),
+            ("section",  C["text_mid"], ("Courier New",  9, "bold")),
+            ("value",    C["white"],    ("Courier New", 10, "bold")),
+            ("ok",       C["green"],    ("Courier New", 10, "bold")),
+            ("warn",     C["amber"],    ("Courier New", 10, "bold")),
+            ("critical", C["red"],      ("Courier New", 10, "bold")),
+            ("dim",      C["text_dim"], ("Courier New", 10)),
+            ("normal",   C["text"],     ("Courier New", 10)),
+        ]:
+            self._results_text.tag_configure(tag, foreground=fg, font=font)
 
         self._write_placeholder_results()
 
@@ -232,33 +216,25 @@ class BovIMCApp(tk.Tk):
                                     font=("Courier New", 9), anchor="w")
         self._lbl_status.grid(row=0, column=0, padx=10, sticky="w")
 
-        self._lbl_fps = tk.Label(bar, text="",
-                                  bg=C["panel"], fg=C["text_dim"],
-                                  font=("Courier New", 9), anchor="e")
+        self._lbl_fps = tk.Label(bar, text="", bg=C["panel"], fg=C["text_dim"],
+                                 font=("Courier New", 9), anchor="e")
         self._lbl_fps.grid(row=0, column=2, padx=10, sticky="e")
 
-        tk.Label(bar, text="UFSC Araranguá · CIT7596 · 2026.1",
-                 bg=C["panel"], fg=C["text_dim"],
-                 font=("Courier New", 8)).grid(row=0, column=1, sticky="e", padx=10)
-
-    # ── Modelo ────────────────────────────────────────────────────────────────
-
     def _load_model_async(self):
+        self._btn_img.configure(state="disabled")
+        self._btn_vid.configure(state="disabled")
+
         def _run():
             try:
                 ensure_model(lambda m: self._set_status(f"● {m}", C["amber"]))
                 self._detector = Detector()
                 self._set_status("● Modelo pronto — aguardando arquivo", C["green"])
-                self._btn_img.configure(state="normal")
-                self._btn_vid.configure(state="normal")
+                self.after(0, lambda: self._btn_img.configure(state="normal"))
+                self.after(0, lambda: self._btn_vid.configure(state="normal"))
             except Exception as e:
                 self._set_status(f"● Erro ao carregar modelo: {e}", C["red"])
 
-        self._btn_img.configure(state="disabled")
-        self._btn_vid.configure(state="disabled")
         threading.Thread(target=_run, daemon=True).start()
-
-    # ── Abertura de arquivo ───────────────────────────────────────────────────
 
     def _open_image(self):
         path = filedialog.askopenfilename(
@@ -267,8 +243,7 @@ class BovIMCApp(tk.Tk):
         )
         if not path:
             return
-        self._stop_video(report=False)
-        self._session.clear()
+        self._hard_stop()
         self._source_name = os.path.basename(path)
         self._set_status(f"● Analisando: {self._source_name}", C["amber"])
         threading.Thread(target=self._process_image, args=(path,), daemon=True).start()
@@ -280,12 +255,21 @@ class BovIMCApp(tk.Tk):
         )
         if not path:
             return
-        self._stop_video(report=False)
-        self._session.clear()
+        self._hard_stop()
         self._source_name = os.path.basename(path)
         self._start_video(path)
 
-    # ── Processamento de imagem ───────────────────────────────────────────────
+    def _run_detection(self, frame: np.ndarray) -> tuple[list, np.ndarray]:
+        h, w = frame.shape[:2]
+        dets = self._detector.detect(frame)
+        results   = []
+        annotated = frame.copy()
+        for det in dets:
+            metrics = Detector.estimate_metrics(det, h, w)
+            diag    = Detector.diagnostico(metrics)
+            results.append({"det": det, "metrics": metrics, "diag": diag})
+            annotated = draw_overlay(annotated, det, metrics, diag)
+        return results, annotated
 
     def _process_image(self, path: str):
         frame = cv2.imread(path)
@@ -293,33 +277,18 @@ class BovIMCApp(tk.Tk):
             self._set_status("● Erro: não foi possível ler a imagem.", C["red"])
             return
 
-        h, w  = frame.shape[:2]
-        dets  = self._detector.detect(frame)
-
-        results    = []
-        annotated  = frame.copy()
-        for det in dets:
-            metrics = Detector.estimate_metrics(det, h, w)
-            diag    = Detector.diagnostico(metrics)
-            results.append({"det": det, "metrics": metrics, "diag": diag})
-            annotated = draw_overlay(annotated, det, metrics, diag)
-
+        results, annotated = self._run_detection(frame)
         self._last_annotated = annotated
-        self._last_results   = results
 
-        # Guarda na sessão para o relatório
-        ts = time.strftime("%H:%M:%S")
         self._session.append({
             "frame_bgr": annotated,
             "results":   results,
-            "ts":        ts,
+            "ts":        time.strftime("%H:%M:%S"),
             "source":    self._source_name,
         })
 
-        cw = self._canvas.winfo_width()  or self.PREVIEW_W
-        ch = self._canvas.winfo_height() or self.PREVIEW_H
-        photo = frame_to_photoimage(annotated, cw, ch)
-
+        cw, ch = self._canvas_size()
+        photo  = frame_to_photoimage(annotated, cw, ch)
         self.after(0, lambda: self._update_canvas(photo))
         self.after(0, lambda: self._update_results(results, self._source_name))
         self.after(0, lambda: self._btn_stop.configure(state="normal"))
@@ -332,8 +301,6 @@ class BovIMCApp(tk.Tk):
             col if n > 0 else C["amber"]
         )
 
-    # ── Vídeo ─────────────────────────────────────────────────────────────────
-
     def _start_video(self, path: str):
         self._cap = cv2.VideoCapture(path)
         if not self._cap.isOpened():
@@ -341,11 +308,9 @@ class BovIMCApp(tk.Tk):
             return
         self._btn_stop.configure(state="normal")
         self._set_status(f"● Reproduzindo: {self._source_name}", C["green"])
-        self._t_last_frame    = time.time()
         self._video_start_time = time.time()
-        self._frame_count     = 0
-        self._last_annotated  = None
-        self._last_results    = []
+        self._frame_count      = 0
+        self._last_annotated   = None
         self._video_loop()
 
     def _video_loop(self):
@@ -360,117 +325,82 @@ class BovIMCApp(tk.Tk):
 
         self._frame_count += 1
 
-        # Detecta a cada 5 frames; nos demais reutiliza os overlays anteriores
         if self._frame_count % 5 == 0:
-            h, w  = frame.shape[:2]
-            dets  = self._detector.detect(frame)
-            results = []
-            annotated = frame.copy()
-            for det in dets:
-                metrics = Detector.estimate_metrics(det, h, w)
-                diag    = Detector.diagnostico(metrics)
-                results.append({"det": det, "metrics": metrics, "diag": diag})
-                annotated = draw_overlay(annotated, det, metrics, diag)
+            results, annotated       = self._run_detection(frame)
+            self._last_annotated     = annotated
+            display_frame            = annotated
 
-            self._last_annotated = annotated
-            self._last_results   = results
-
-            # Salva 1 frame por segundo para o relatório (a cada ~30 frames)
             if self._frame_count % 30 == 0:
-                novo_item = {
-                    "frame_bgr": annotated.copy(),
-                    "results": results,
-                    "ts": time.strftime("%H:%M:%S"),
-                    "source": self._source_name,
-                }
-
-                if not self._session:
-                    self._session.append(novo_item)
-                else:
-                    ultimo = self._session[-1]
-
-                    if not self._same_results(
-                        ultimo["results"],
-                        results
-                    ):
-                        self._session.append(novo_item)
+                novo = {"frame_bgr": annotated.copy(), "results": results,
+                        "ts": time.strftime("%H:%M:%S"), "source": self._source_name}
+                if not self._session or not self._same_results(self._session[-1]["results"], results):
+                    self._session.append(novo)
 
             self.after(0, lambda r=results: self._update_results(r, self._source_name, video=True))
-            display_frame = annotated
         else:
-            # Reutiliza o último frame anotado → sem piscar
             display_frame = self._last_annotated if self._last_annotated is not None else frame
 
-        # FPS
-        now = time.time()
-        fps = 1.0 / max(now - self._t_last_frame, 1e-6)
-        self._t_last_frame = now
-        self._lbl_fps.configure(text=f"FPS: {fps:.1f}  |  Amostras: {len(self._session)}")
-
-        cw = self._canvas.winfo_width()  or self.PREVIEW_W
-        ch = self._canvas.winfo_height() or self.PREVIEW_H
-        photo = frame_to_photoimage(display_frame, cw, ch)
+        cw, ch = self._canvas_size()
+        photo  = frame_to_photoimage(display_frame, cw, ch)
         self._update_canvas(photo)
+
+        fps = 1.0 / max(time.time() - getattr(self, "_t_last", time.time()), 1e-6)
+        self._t_last = time.time()
+        self._lbl_fps.configure(text=f"FPS: {fps:.1f}  |  Amostras: {len(self._session)}")
 
         self._video_job = self.after(16, self._video_loop)
 
-    def _same_results(self, r1, r2):
+    @staticmethod
+    def _same_results(r1: list, r2: list) -> bool:
         if len(r1) != len(r2):
             return False
+        return all(
+            a["metrics"]["peso_kg"]   == b["metrics"]["peso_kg"] and
+            a["metrics"]["altura_cm"] == b["metrics"]["altura_cm"] and
+            a["metrics"]["imc"]       == b["metrics"]["imc"]
+            for a, b in zip(r1, r2)
+        )
 
-        for a, b in zip(r1, r2):
-            m1 = a["metrics"]
-            m2 = b["metrics"]
-
-            if (
-                m1["peso_kg"] != m2["peso_kg"] or
-                m1["altura_cm"] != m2["altura_cm"] or
-                m1["imc"] != m2["imc"]
-            ):
-                return False
-
-        return True
-
-    def _stop_video(self, report=True):
-        """Para o vídeo. Se report=True e houver sessão, pergunta e gera PDF."""
+    def _hard_stop(self):
         if self._video_job:
             self.after_cancel(self._video_job)
             self._video_job = None
-
-        duracao = time.time() - self._video_start_time if self._video_start_time else 0
-
         if self._cap:
             self._cap.release()
             self._cap = None
-
-        self._lbl_fps.configure(text="")
-
-        if report and self._session:
-            self._ask_and_generate_report(duracao)
-        else:
-            self._btn_stop.configure(state="disabled")
+        self._session.clear()
+        self._last_annotated   = None
+        self._source_name      = ""
+        self._video_start_time = 0.0
+        self._frame_count      = 0
 
     def _stop_and_report(self):
-        """Chamado pelo botão Parar e Gerar Relatório."""
-        if self._cap:
-            # Estava em vídeo → para e gera
-            self._stop_video(report=True)
-        elif self._session:
-            # Era imagem → gera direto
-            self._ask_and_generate_report(0)
-        self._btn_stop.configure(state="disabled")
+        session_snapshot = list(self._session)
+        duracao = time.time() - self._video_start_time if self._video_start_time else 0
+        source  = session_snapshot[0].get("source", "") if session_snapshot else ""
 
-    def _ask_and_generate_report(self, duracao: float):
-        """Pergunta onde salvar e gera o PDF em background."""
-        if not self._session:
-            messagebox.showinfo("Relatório", "Nenhuma análise disponível para gerar relatório.")
+        self._hard_stop()
+
+        def _reset_ui():
+            self._lbl_fps.configure(text="")
+            self._btn_stop.configure(state="disabled")
+            self._show_placeholder()
+            self._write_placeholder_results()
+            self._lbl_status.configure(
+                text="● Modelo pronto — aguardando arquivo", fg=C["green"])
+        self.after(50, _reset_ui)
+
+        self._save_report(session_snapshot, source, duracao)
+
+    def _save_report(self, session_snapshot: list, source: str, duracao: float):
+        if not session_snapshot:
             return
 
-        default_name = f"bovimc_relatorio_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        default = f"bovimc_relatorio_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
         path = filedialog.asksaveasfilename(
             title="Salvar Relatório PDF",
             defaultextension=".pdf",
-            initialfile=default_name,
+            initialfile=default,
             filetypes=[("PDF", "*.pdf"), ("Todos", "*.*")],
         )
         if not path:
@@ -478,35 +408,21 @@ class BovIMCApp(tk.Tk):
 
         self._set_status("● Gerando relatório PDF…", C["amber"])
 
-        session_snapshot = list(self._session)
-        source           = self._source_name
-
         def _gen():
             try:
-                gerar_relatorio(
-                    session_data=session_snapshot,
-                    output_path=path,
-                    fonte=source,
-                    duracao_s=duracao,
-                )
+                gerar_relatorio(session_data=session_snapshot, output_path=path,
+                                fonte=os.path.basename(source), duracao_s=duracao)
                 self._set_status(f"● Relatório salvo: {os.path.basename(path)}", C["green"])
-                self.after(0, lambda: messagebox.showinfo(
-                    "Relatório Gerado",
-                    f"PDF salvo com sucesso!\n\n{path}\n\n"
-                    f"{len(session_snapshot)} frames analisados."
-                ))
             except Exception as e:
                 self._set_status(f"● Erro ao gerar PDF: {e}", C["red"])
                 self.after(0, lambda: messagebox.showerror("Erro", f"Falha ao gerar PDF:\n{e}"))
 
         threading.Thread(target=_gen, daemon=True).start()
 
-    # ── Canvas / Resultados ───────────────────────────────────────────────────
-
     def _update_canvas(self, photo):
+        self._is_placeholder = False
         self._canvas.delete("all")
-        cw = self._canvas.winfo_width()  or self.PREVIEW_W
-        ch = self._canvas.winfo_height() or self.PREVIEW_H
+        cw, ch = self._canvas_size()
         self._canvas_photo = photo
         self._canvas.create_image(cw // 2, ch // 2, anchor="center", image=photo)
 
@@ -515,58 +431,55 @@ class BovIMCApp(tk.Tk):
         t.configure(state="normal")
         t.delete("1.0", "end")
 
-        ts = time.strftime("%H:%M:%S")
         t.insert("end", f"  {'[VÍDEO]' if video else '[IMAGEM]'}  {source}\n", "section")
-        t.insert("end", f"  Análise: {ts}\n\n", "dim")
+        t.insert("end", f"  Análise: {time.strftime('%H:%M:%S')}\n\n", "dim")
 
         if not results:
             t.insert("end", "  ✗  Nenhum bovino detectado.\n\n", "warn")
             t.insert("end", "  Dicas:\n", "dim")
-            t.insert("end", "  • Use imagem lateral do animal\n", "dim")
-            t.insert("end", "  • Boa iluminação e fundo contrastante\n", "dim")
-            t.insert("end", "  • Animal deve estar em destaque\n", "dim")
+            for dica in ["Use imagem lateral do animal",
+                         "Boa iluminação e fundo contrastante",
+                         "Animal deve estar em destaque"]:
+                t.insert("end", f"  • {dica}\n", "dim")
             t.configure(state="disabled")
             return
 
         for idx, r in enumerate(results, 1):
-            det     = r["det"]
-            metrics = r["metrics"]
-            diag    = r["diag"]
-            status  = diag["status"]
-            score   = diag["score"]
-            col_tag = "ok" if status == "SAUDÁVEL" else ("warn" if status == "ATENÇÃO" else "critical")
+            det, metrics, diag = r["det"], r["metrics"], r["diag"]
+            status = diag["status"]
+            score  = diag["score"]
+            ctag   = "ok" if status == "SAUDÁVEL" else ("warn" if status == "ATENÇÃO" else "critical")
+            imc    = metrics["imc"]
 
             t.insert("end", f"  ── Animal #{idx}  {det['label'].upper()}", "title")
             t.insert("end", f"  confiança {det['confidence']*100:.0f}%\n\n", "dim")
 
             t.insert("end",  "  SCORE DE SAÚDE\n", "section")
             t.insert("end", f"  {score}/100  —  ", "value")
-            t.insert("end", f"{status}\n\n", col_tag)
-
-            filled = round(score / 5)
-            bar    = "█" * filled + "░" * (20 - filled)
-            t.insert("end", f"  [{bar}]\n\n", col_tag)
+            t.insert("end", f"{status}\n\n", ctag)
+            bar = "█" * round(score/5) + "░" * (20 - round(score/5))
+            t.insert("end", f"  [{bar}]\n\n", ctag)
 
             t.insert("end", "  MEDIDAS ESTIMADAS\n", "section")
-            imc = metrics["imc"]
-            rows = [
-                ("Peso (±30%)",        f"{metrics['peso_kg']} kg",       ""),
+            for label, val, note in [
+                ("Peso (±30%)",       f"{metrics['peso_kg']} kg",       ""),
                 ("Altura (cernelha)", f"{metrics['altura_cm']} cm",     ""),
                 ("Comprimento",       f"{metrics['comprimento_cm']} cm",""),
                 ("Robustez (w/h)",    f"{metrics['wh_ratio']:.2f}",     "  (gordo>1.05, magro<0.80)"),
                 ("IMC Bovino",        f"{imc:.2f}",                     "  (normal: 2.00–2.80)"),
-            ]
-            for label, val, note in rows:
+            ]:
                 t.insert("end", f"  {label:<20}", "dim")
                 t.insert("end", val, "value")
                 t.insert("end", f"{note}\n", "dim")
 
             t.insert("end", "\n  INTERPRETAÇÃO IMC\n", "section")
-            if imc < 1.70:   interp, itag = "Subnutrição severa",          "critical"
-            elif imc < 2.00: interp, itag = "Abaixo do ideal",             "warn"
-            elif imc <= 2.80:interp, itag = "Faixa ideal",                 "ok"
-            elif imc <= 3.20:interp, itag = "Levemente acima do ideal",    "warn"
-            else:             interp, itag = "Sobrepeso",                   "warn"
+            interp, itag = (
+                ("Subnutrição severa",        "critical") if imc < 1.70 else
+                ("Abaixo do ideal",           "warn")     if imc < 2.00 else
+                ("Faixa ideal",               "ok")       if imc <= 2.80 else
+                ("Levemente acima do ideal",  "warn")     if imc <= 3.20 else
+                ("Sobrepeso",                 "warn")
+            )
             t.insert("end", f"  {interp}\n\n", itag)
 
             if diag["alertas"]:
@@ -583,30 +496,21 @@ class BovIMCApp(tk.Tk):
 
             t.insert("end", "  " + "─" * 36 + "\n\n", "dim")
 
-        amostras = len(self._session)
-        if amostras:
-            t.insert("end", f"  📊 Amostras na sessão: {amostras}\n", "dim")
-            t.insert("end",  "  Clique em Parar e Gerar Relatório para exportar PDF.\n\n", "dim")
+        if self._session:
+            t.insert("end", f"  📊 Amostras: {len(self._session)}  |  "
+                             "Clique em Parar e Gerar Relatório para exportar PDF.\n\n", "dim")
 
         t.insert("end", "\n  ⚠ Estimativas por visão computacional.\n", "dim")
         t.insert("end",   "  Consulte um médico veterinário.\n", "dim")
-        t.insert("end",   "  BovIMC · UFSC · CIT7596 · 2026.1\n", "dim")
-
         t.see("1.0")
         t.configure(state="disabled")
-
-    # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _set_status(self, msg: str, color: str):
         self.after(0, lambda: self._lbl_status.configure(text=msg, fg=color))
 
     def on_close(self):
-        self._stop_video(report=False)
+        self._hard_stop()
         self.destroy()
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ENTRY POINT
-# ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     app = BovIMCApp()
